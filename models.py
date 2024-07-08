@@ -1165,6 +1165,13 @@ class P1Decoder(nn.Module):
         return self.fc5(torch.cat((out4,z),dim=1))
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+
+
 class P2GEncoder(nn.Module):
     def __init__(self, tracker_size, hidden_size, latent_size):
         super().__init__()
@@ -1217,6 +1224,68 @@ class P2GEncoder(nn.Module):
         mu, logvar = self.encode(t1, t2, t3, t4, t5)
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class P1GDecoder(nn.Module):
+    def __init__(self, latent_size, tracker_size, hidden_size, output_size):
+        super().__init__()
+        self.tracker_size = tracker_size
+        self.input_size = latent_size + self.tracker_size * 5
+        self.output_size = output_size
+        self.latent_size = latent_size
+        self.hidden_size = hidden_size
+
+        # Define GRU layers
+        self.gru1 = nn.GRU(input_size=tracker_size, hidden_size=hidden_size, batch_first=True)
+        self.gru2 = nn.GRU(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
+        self.gru3 = nn.GRU(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
+
+        # Define fully connected layers
+        self.fc1 = nn.Linear(self.input_size, self.hidden_size)
+        self.fc2 = nn.Linear(self.hidden_size + latent_size, self.hidden_size)
+        self.fc3 = nn.Linear(self.hidden_size + latent_size, self.hidden_size)
+        self.fc4 = nn.Linear(self.hidden_size + latent_size, self.hidden_size)
+        self.fc5 = nn.Linear(self.hidden_size + latent_size, self.output_size)
+
+    def forward(self, z, t1, t2, t3, t4, t5):
+        # Concatenate tracker inputs and prepare for GRU
+        tracker_data = torch.stack((t1, t2, t3, t4, t5), dim=1)  # Stack tensors for GRU
+
+        # Pass data through the first GRU layer
+        gru_out1, _ = self.gru1(tracker_data)
+        gru_out1 = gru_out1.contiguous().view(gru_out1.size(0), -1)  # Flatten the GRU output
+        out1 = self.fc1(F.elu(gru_out1))
+
+        # Pass the output through the second GRU layer
+        gru_out2, _ = self.gru2(out1.unsqueeze(1))
+        gru_out2 = gru_out2.contiguous().view(gru_out2.size(0), -1)  # Flatten the GRU output
+        out2 = self.fc2(F.elu(torch.cat((gru_out2, z), dim=1)))
+
+        # Pass the output through the third GRU layer
+        gru_out3, _ = self.gru3(out2.unsqueeze(1))
+        gru_out3 = gru_out3.contiguous().view(gru_out3.size(0), -1)  # Flatten the GRU output
+        out3 = self.fc3(F.elu(torch.cat((gru_out3, z), dim=1)))
+
+        # Final fully connected layers
+        out4 = self.fc4(F.elu(torch.cat((out3, z), dim=1)))
+        return self.fc5(torch.cat((out4, z), dim=1))
+
+
+# Example usage:
+# model = P1Decoder(latent_size=10, tracker_size=20, hidden_size=50, output_size=5)
+# z = torch.randn(32, 10)
+# t1 = torch.randn(32, 20)
+# t2 = torch.randn(32, 20)
+# t3 = torch.randn(32, 20)
+# t4 = torch.randn(32, 20)
+# t5 = torch.randn(32, 20)
+# output = model(z, t1, t2, t3, t4, t5)
+Explanation:
 class P2Encoder(nn.Module):
     def __init__(self, tracker_size, hidden_size, latent_size):
         super().__init__()
@@ -1654,7 +1723,7 @@ class TDGAVAE(nn.Module):
     def sample(self, z, t1, t3, t5, t7, t9):
         return self.decoder(z, t1, t3, t5, t7, t9)
 
-class TDGAVAE(nn.Module):
+class TDGGAVAE(nn.Module):
     def __init__(self, tracker_size, condition_frame,encode_hidden_size, latent_size,latent_size2, decode_hidden_size, output_size1, output_numframe1, output_size2, output_numframe2):
         super().__init__()
         self.condition=condition_frame
@@ -1670,7 +1739,7 @@ class TDGAVAE(nn.Module):
         self.diffusion2 = DenoiseDiffusion2(latent_size,latent_size,noise_steps2=10000)
         self.gruflow=nn.GRU(latent_size*5,latent_size*5,num_layers=1,batch_first=True)
         self.gruflow2=nn.GRU(latent_size*3,latent_size*3,num_layers=1,batch_first=True)
-        self.decoder1 = P1Decoder(latent_size*5, tracker_size, decode_hidden_size, output_size1 * output_numframe1)
+        self.decoder1 = P1GDecoder(latent_size*5, tracker_size, decode_hidden_size, output_size1 * output_numframe1)
         self.encoder2 = P2GEncoder(output_size1, encode_hidden_size, latent_size)
         self.decoder2 = P2Decoder(latent_size2,latent_size, tracker_size, decode_hidden_size, output_size2 * output_numframe2)
         self.decoder3 = P3Decoder(latent_size2 * 3, latent_size*3, tracker_size, decode_hidden_size,
