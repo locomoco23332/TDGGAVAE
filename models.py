@@ -221,7 +221,7 @@ class BetaDerivatives():
         self.beta_start = beta_start
         self.beta_end = beta_end
         self.time_steps = time_steps
-        self.betas = self.prepare_noise_schedule().to(device="cpu")
+        self.betas = self.prepare_noise_schedule().to(device="cuda")
         self.alpha = 1 - self.betas
         self.alpha_hat = torch.cumprod(self.alpha, dim=0)
 
@@ -237,7 +237,7 @@ class BetaDerivatives():
 
 class GaussianDiffusion():
     def __init__(self, input_size, noise_step, output_size):
-        self.device = "cpu"
+        self.device = "cuda"
         self.input_size = input_size
         self.output_size = output_size
         self.noise_step = noise_step
@@ -275,8 +275,8 @@ class TimeEmbedding(nn.Module):
             #t = t.to('cuda')
 
         half_dim = self.n // 2
-        emb = torch.log(torch.tensor(1000.0, device='cpu') / (half_dim - 1))
-        emb = torch.exp(torch.arange(half_dim, device='cpu') * -emb)
+        emb = torch.log(torch.tensor(1000.0, device='cuda') / (half_dim - 1))
+        emb = torch.exp(torch.arange(half_dim, device='cuda') * -emb)
         emb = t * emb
         emb = torch.cat((emb.sin(), emb.cos()), dim=1)
         #emb = torch.stack((emb, emb))
@@ -305,8 +305,8 @@ class TimeEmbedding(nn.Module):
             #t = t.to('cuda')
 
         half_dim = self.n // 2
-        emb = torch.log(torch.tensor(1000.0, device='cpu') / (half_dim - 1))
-        emb = torch.exp(torch.arange(half_dim, device='cpu') * -emb)
+        emb = torch.log(torch.tensor(1000.0, device='cuda') / (half_dim - 1))
+        emb = torch.exp(torch.arange(half_dim, device='cuda') * -emb)
         emb = t * emb
         emb = torch.cat((emb.sin(), emb.cos()), dim=1)
         #emb = torch.stack((emb, emb))
@@ -1355,12 +1355,43 @@ class P2Encoder(nn.Module):
         mu, logvar = self.encode(t1, t2, t3, t4, t5)
         z = self.reparameterize(mu, logvar)
         return z, mu, logvar
+class P3Encoder(nn.Module):
+    def __init__(self, tracker_size, hidden_size, latent_size):
+        super().__init__()
+        self.input_size = tracker_size * 3
+        self.tracker_size = tracker_size
+        self.latent_size = latent_size
+        self.hidden_size = hidden_size
+        self.fc1 = nn.Linear(self.input_size, self.hidden_size)
+        self.fc2 = nn.Linear(self.hidden_size + self.tracker_size, self.hidden_size)
+        self.fc3 = nn.Linear(self.hidden_size + self.tracker_size, self.hidden_size)
+        self.fc4 = nn.Linear(self.hidden_size + self.tracker_size, self.hidden_size)
+        self.mu = nn.Linear(self.hidden_size + self.tracker_size, self.latent_size)
+        self.logvar = nn.Linear(self.hidden_size + self.tracker_size, self.latent_size)
+
+    def encode(self, t1, t2, t3):
+        data = torch.cat((t1, t2, t3), dim=1)
+        out1 = self.fc1(F.elu(data))
+        out2 = self.fc2(F.elu(torch.cat((out1, t2), dim=1)))
+        out3 = self.fc3(F.elu(torch.cat((out2, t2), dim=1)))
+        out4 = self.fc4(F.elu(torch.cat((out3, t2), dim=1)))
+        return self.mu(torch.cat((out4, t2), dim=1)), self.logvar(torch.cat((out4, t2), dim=1))
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, t1, t2, t3):
+        mu, logvar = self.encode(t1, t2, t3)
+        z = self.reparameterize(mu, logvar)
+        return z, mu, logvar
 
 class P2Decoder(nn.Module):
     def __init__(self, latent_size2,latent_size, tracker_size, hidden_size, output_size):
         super().__init__()
         self.tracker_size = tracker_size
-        self.input_size = latent_size2 + self.tracker_size * 3
+        self.input_size = latent_size2 +tracker_size*3
         self.output_size = output_size
         self.latent_size = latent_size
         self.hidden_size = hidden_size
@@ -1381,7 +1412,7 @@ class P3Decoder(nn.Module):
     def __init__(self, latent_size2,latent_size, tracker_size, hidden_size, output_size):
         super().__init__()
         self.tracker_size = tracker_size
-        self.input_size = latent_size2 + self.tracker_size * 3
+        self.input_size = latent_size2+tracker_size*6
         self.output_size = output_size
         self.latent_size = latent_size
         self.hidden_size = hidden_size
@@ -1392,7 +1423,7 @@ class P3Decoder(nn.Module):
         self.fc5 = nn.Linear(self.hidden_size + self.latent_size, self.output_size)
 
     def forward(self, z, t1, t2, t3):
-        #print(self.tracker_size)
+        #print(self.input_size)
         out1 = self.fc1(F.elu(torch.cat((z, t1, t2, t3), dim=1)))
         out2 = self.fc2(F.elu(torch.cat((out1, z), dim=1)))
         out3 = self.fc3(F.elu(torch.cat((out2, z), dim=1)))
@@ -1784,8 +1815,9 @@ class TDGGAVAE(nn.Module):
         self.gruflow2=nn.GRU(latent_size*3,latent_size*3,num_layers=1,batch_first=True)
         self.decoder1 = P1Decoder(latent_size*5, tracker_size, decode_hidden_size, output_size1 * output_numframe1)
         self.encoder2 = P2Encoder(output_size1, encode_hidden_size, latent_size)
-        self.decoder2 = P2Decoder(latent_size2,latent_size, tracker_size, decode_hidden_size, output_size2 * output_numframe2)
-        self.decoder3 = P3Decoder(latent_size2 * 3, latent_size*3, tracker_size, decode_hidden_size,
+        self.decoder2 = P2Decoder(latent_size2*3,latent_size*3, tracker_size, decode_hidden_size, output_size2 * output_numframe2)
+        self.encoder3 = P3Encoder(output_size2,encode_hidden_size,latent_size)
+        self.decoder3 = P3Decoder(latent_size2 , latent_size, tracker_size, decode_hidden_size,
                                   output_size2 * output_numframe2)
         self.a1=nn.Parameter(torch.tensor(0.2))
         self.a2=nn.Parameter(torch.tensor(0.3))
@@ -1832,12 +1864,16 @@ class TDGGAVAE(nn.Module):
         diff22=self.diffusion2(z2,out[:,0,:])
         z2=torch.cat((z2,diff21),dim=1)
         z2=torch.cat((z2,diff22),dim=1)
-        #z2=z2.unsqueeze(1)
-        #gru_out2,_=self.gruflow2(z2)
-        #gru_out2=gru_out2.squeeze(1)
+        z2=z2.unsqueeze(1)
+        gru_out2,_=self.gruflow2(z2)
+        gru_out2=gru_out2.squeeze(1)
         #일반적으로 gru 뺀다...
         #print(z2.shape)
-        return self.decoder3(z2, out[:, 1, :], out[:, 2, :], out[:, 3, :]), mu2, logvar2
+        out2=self.decoder2(gru_out2,out[:, 1, :], out[:, 2, :], out[:, 3, :])
+        out2=out2.view(-1,self.output_numframe1,self.output_size1)
+        z3,mu3,logvar3=self.encoder3(out2[:,0,:],out2[:,1,:],out2[:,2,:])
+        return self.decoder3(z3,out2[:,0,:],out2[:,1,:],out2[:,2,:]),mu3,logvar3
+        #return self.decoder3(gru_out2, out[:, 1, :], out[:, 2, :], out[:, 3, :]), mu2, logvar2
 
     def sample(self, z, t1, t3, t5, t7, t9):
         return self.decoder(z, t1, t3, t5, t7, t9)
