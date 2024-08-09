@@ -281,11 +281,13 @@ def main():
 
                     #out2=out2.view(-1,output_numframe1,output_size)
                     recon_loss3 = F.mse_loss(out,output)
-
+                    #loss=recon_loss*0.8+0.2*dif_loss2
+                    #우선 이거하고 나서 및에 있는 dif_loss2+dif_loss3 진행하기!
                     #B_loss=F.binary_cross_entropy(out,output,weight=0.3)
                     #print(dif_loss+dif_loss2)
-                    loss=recon_loss*0.6+recon_loss2*0.2+recon_loss3*0.1+0.01*(dif_loss2+dif_loss3+dif_loss)
-
+                    #loss=recon_loss*0.6+recon_loss2*0.2+recon_loss3*0.1+0.01*(dif_loss2+dif_loss3+dif_loss)
+                    #다음 실험 8/12일
+                    loss=recon_loss*0.8+0.1*dif_loss2+0.1*dif_loss3
                     #loss=loss+KLD*0.5
                     #loss=recon_loss*0.9+recon_loss2*0.1
                     #loss=recon_loss*0.8+recon_loss2*0.1+recon_loss3*0.1
@@ -321,7 +323,7 @@ def main():
                                                                                                             FPS=int((
                                                                                                                                 ep / (
                                                                                                                                     end - start)) * 100),epoch_duration=epoch_duration))
-            torch.save(copy.deepcopy(ae).cpu(), "TD5GGAVA1E10_los2.pt")
+            torch.save(copy.deepcopy(ae).cpu(), "TD5GGAVA1E10_los_dif.pt")
             #line.set_xdata(epochs_list)
             #line.set_ydata(vae_loss_list)
             #plt.draw()
